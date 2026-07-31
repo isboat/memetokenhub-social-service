@@ -1,0 +1,19 @@
+name: Pull Request Validation
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: actions/setup-dotnet@v5
+        with: { dotnet-version: 10.0.x }
+      - name: Authenticate GitHub Packages
+        run: dotnet nuget update source MemeTokenHub --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}" --store-password-in-clear-text
+      - run: dotnet restore MemeTokenHub.SocialService.sln
+      - run: dotnet format MemeTokenHub.SocialService.sln --no-restore --verify-no-changes
+      - run: dotnet build MemeTokenHub.SocialService.sln --configuration Release --no-restore
+      - run: dotnet test MemeTokenHub.SocialService.sln --configuration Release --no-build

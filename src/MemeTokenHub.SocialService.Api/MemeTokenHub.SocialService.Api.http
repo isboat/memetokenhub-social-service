@@ -1,0 +1,6 @@
+@MemeTokenHub.SocialService.Api_HostAddress = http://localhost:5182
+
+GET {{MemeTokenHub.SocialService.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

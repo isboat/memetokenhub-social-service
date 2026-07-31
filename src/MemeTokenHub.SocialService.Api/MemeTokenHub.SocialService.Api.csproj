@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AspNetCore.HealthChecks.MongoDb" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+    <PackageReference Include="Swashbuckle.AspNetCore.Swagger" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerGen" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MemeTokenHub.SocialService.Application\MemeTokenHub.SocialService.Application.csproj" />
+    <ProjectReference Include="..\MemeTokenHub.SocialService.Infrastructure\MemeTokenHub.SocialService.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(UseMemeTokenHubShared)' == 'true'">
+    <PackageReference Include="MemeTokenHub.Shared" />
+  </ItemGroup>
+</Project>

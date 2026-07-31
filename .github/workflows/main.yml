@@ -1,0 +1,41 @@
+name: Build, Test, and Deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: read
+  id-token: write
+env:
+  DOTNET_VERSION: 10.0.x
+  API_PROJECT: src/MemeTokenHub.SocialService.Api/MemeTokenHub.SocialService.Api.csproj
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: actions/setup-dotnet@v5
+        with: { dotnet-version: '${{ env.DOTNET_VERSION }}' }
+      - name: Authenticate GitHub Packages
+        run: dotnet nuget update source MemeTokenHub --username "${{ github.actor }}" --password "${{ secrets.GITHUB_TOKEN }}" --store-password-in-clear-text
+      - run: dotnet restore MemeTokenHub.SocialService.sln
+      - run: dotnet format MemeTokenHub.SocialService.sln --no-restore --verify-no-changes
+      - run: dotnet build MemeTokenHub.SocialService.sln --configuration Release --no-restore
+      - run: dotnet test MemeTokenHub.SocialService.sln --configuration Release --no-build
+      - run: dotnet publish "${{ env.API_PROJECT }}" --configuration Release --no-build --output publish
+      - uses: actions/upload-artifact@v4
+        with: { name: social-service, path: publish }
+  deploy:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build-test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: social-service, path: publish }
+      - uses: azure/login@v2
+        with: { client-id: '${{ secrets.AZURE_CLIENT_ID }}', tenant-id: '${{ secrets.AZURE_TENANT_ID }}', subscription-id: '${{ secrets.AZURE_SUBSCRIPTION_ID }}' }
+      - uses: azure/webapps-deploy@v3
+        with: { app-name: '${{ secrets.AZURE_WEBAPP_NAME }}', package: publish }
