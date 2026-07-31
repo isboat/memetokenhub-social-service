@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text;
+using MemeTokenHub.SocialService.Api;
 using MemeTokenHub.SocialService.Api.Middleware;
 using MemeTokenHub.SocialService.Application.Interfaces;
 using MemeTokenHub.SocialService.Application.Services;
@@ -13,13 +14,19 @@ using MongoDB.Driver;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 MongoDbOptions mongoOptions = builder.Configuration.GetSection(MongoDbOptions.SectionName).Get<MongoDbOptions>() ?? throw new InvalidOperationException("MongoDb configuration is required.");
+ServiceBusOptions serviceBusOptions = builder.Configuration.GetSection(ServiceBusOptions.SectionName).Get<ServiceBusOptions>() ?? new ServiceBusOptions();
 string jwtSecret = builder.Configuration["Jwt:SecretKey"] ?? throw new InvalidOperationException("Jwt:SecretKey configuration is required.");
 
 builder.Services.AddSingleton<IMongoClient>(_ => new MongoClient(mongoOptions.ConnectionString));
 builder.Services.AddSingleton(provider => provider.GetRequiredService<IMongoClient>().GetDatabase(mongoOptions.DatabaseName));
-builder.Services.AddScoped<ISocialRepository, MongoSocialRepository>();
+builder.Services.AddSingleton<MongoSocialRepository>();
+builder.Services.AddSingleton<ISocialRepository>(provider => provider.GetRequiredService<MongoSocialRepository>());
+builder.Services.AddSingleton<IMongoIndexInitializer>(provider => provider.GetRequiredService<MongoSocialRepository>());
+builder.Services.AddHostedService<MongoIndexInitializerHostedService>();
 builder.Services.AddScoped<ISocialService, SocialService>();
-builder.Services.AddSingleton<IEventPublisher, LoggingEventPublisher>();
+builder.Services.AddSingleton(serviceBusOptions);
+builder.Services.AddSingleton<IEventPublisher, MongoEventOutbox>();
+builder.Services.AddHostedService<OutboxDeliveryWorker>();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -31,7 +38,10 @@ builder.Services.AddSwaggerGen(options =>
     options.IncludeXmlComments(Path.Combine(AppContext.BaseDirectory, xmlFileName));
 });
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options => options.TokenValidationParameters = new TokenValidationParameters { ValidateIssuerSigningKey = true, IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)), ValidateIssuer = true, ValidIssuer = builder.Configuration["Jwt:Issuer"], ValidateAudience = true, ValidAudience = builder.Configuration["Jwt:Audience"], ValidateLifetime = true, ClockSkew = TimeSpan.FromMinutes(1) });
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options => options.AddPolicy(AuthorizationPolicies.WriteSupport, policy =>
+    policy.RequireAuthenticatedUser().RequireAssertion(context =>
+        context.User.HasClaim("capability", AuthorizationPolicies.WriteSupport) ||
+        context.User.Claims.Where(claim => claim.Type is "scope" or "capabilities").Any(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(AuthorizationPolicies.WriteSupport, StringComparer.Ordinal)))));
 builder.Services.AddHealthChecks().AddMongoDb(_ => new MongoClient(mongoOptions.ConnectionString), name: "mongodb");
 
 WebApplication app = builder.Build();

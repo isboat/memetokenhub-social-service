@@ -49,11 +49,11 @@ public sealed class SocialController(ISocialService socialService) : ControllerB
     public async Task<ActionResult<VoteSummary>> GetVote(string tokenId, CancellationToken cancellationToken) => Ok(await socialService.GetVoteAsync(tokenId, User.Identity?.IsAuthenticated == true ? User.GetRequiredUserId() : null, cancellationToken));
 
     /// <summary>Creates a timestamped KOL endorsement.</summary>
-    [Authorize, HttpPost("tokens/{tokenId}/support")]
+    [Authorize(Policy = AuthorizationPolicies.WriteSupport), HttpPost("tokens/{tokenId}/support")]
     public async Task<ActionResult<TokenSupport>> Support(string tokenId, CreateSupportRequest request, CancellationToken cancellationToken) => Ok(await socialService.SupportAsync(User.GetRequiredUserId(), tokenId, request, cancellationToken));
 
     /// <summary>Withdraws an endorsement without removing its history.</summary>
-    [Authorize, HttpDelete("tokens/{tokenId}/support")]
+    [Authorize(Policy = AuthorizationPolicies.WriteSupport), HttpDelete("tokens/{tokenId}/support")]
     public async Task<IActionResult> WithdrawSupport(string tokenId, CancellationToken cancellationToken) { await socialService.WithdrawSupportAsync(User.GetRequiredUserId(), tokenId, cancellationToken); return NoContent(); }
 
     /// <summary>Returns active and optionally withdrawn token endorsements.</summary>

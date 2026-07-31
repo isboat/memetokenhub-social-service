@@ -6,7 +6,7 @@ using MongoDB.Driver;
 
 namespace MemeTokenHub.SocialService.Infrastructure.Persistence;
 
-public sealed class MongoSocialRepository(IMongoDatabase database) : ISocialRepository
+public sealed class MongoSocialRepository(IMongoDatabase database) : ISocialRepository, IMongoIndexInitializer
 {
     private readonly IMongoCollection<Follow> follows = database.GetCollection<Follow>("Follows");
     private readonly IMongoCollection<Engagement> engagements = database.GetCollection<Engagement>("Engagements");
@@ -14,15 +14,18 @@ public sealed class MongoSocialRepository(IMongoDatabase database) : ISocialRepo
     private readonly IMongoCollection<TokenSupport> supports = database.GetCollection<TokenSupport>("TokenSupports");
     private readonly IMongoCollection<SocialPost> posts = database.GetCollection<SocialPost>("Posts");
     private readonly IMongoCollection<Reputation> reputations = database.GetCollection<Reputation>("Reputations");
+    private readonly IMongoCollection<MemeTokenHub.SocialService.Infrastructure.Messaging.OutboxMessage> outboxMessages = database.GetCollection<MemeTokenHub.SocialService.Infrastructure.Messaging.OutboxMessage>("EventOutbox");
 
     public async Task<Follow> UpsertFollowAsync(Follow follow, CancellationToken cancellationToken)
     {
         FilterDefinition<Follow> filter = Builders<Follow>.Filter.Where(item => item.FollowerId == follow.FollowerId && item.TargetType == follow.TargetType && item.TargetId == follow.TargetId);
-        Follow? existingFollow = await follows.Find(filter).FirstOrDefaultAsync(cancellationToken);
-        if (existingFollow is not null)
-            return existingFollow;
-        await follows.InsertOneAsync(follow, cancellationToken: cancellationToken);
-        return follow;
+        UpdateDefinition<Follow> update = Builders<Follow>.Update
+            .SetOnInsert(item => item.Id, follow.Id)
+            .SetOnInsert(item => item.FollowerId, follow.FollowerId)
+            .SetOnInsert(item => item.TargetType, follow.TargetType)
+            .SetOnInsert(item => item.TargetId, follow.TargetId)
+            .SetOnInsert(item => item.CreatedAt, follow.CreatedAt);
+        return await follows.FindOneAndUpdateAsync(filter, update, new FindOneAndUpdateOptions<Follow> { IsUpsert = true, ReturnDocument = ReturnDocument.After }, cancellationToken);
     }
 
     public async Task<bool> DeleteFollowAsync(string followerId, FollowTargetType targetType, string targetId, CancellationToken cancellationToken) => (await follows.DeleteOneAsync(item => item.FollowerId == followerId && item.TargetType == targetType && item.TargetId == targetId, cancellationToken)).DeletedCount > 0;
@@ -37,14 +40,25 @@ public sealed class MongoSocialRepository(IMongoDatabase database) : ISocialRepo
 
     public async Task<Engagement> AddEngagementAsync(Engagement engagement, CancellationToken cancellationToken)
     {
-        if (engagement.Type == "Like")
+        if (engagement.Type != "Like")
         {
-            Engagement? existingLike = await engagements.Find(item => item.UserId == engagement.UserId && item.TokenId == engagement.TokenId && item.Type == "Like").FirstOrDefaultAsync(cancellationToken);
-            if (existingLike is not null)
-                return existingLike;
+            await engagements.InsertOneAsync(engagement, cancellationToken: cancellationToken);
+            return engagement;
         }
-        await engagements.InsertOneAsync(engagement, cancellationToken: cancellationToken);
-        return engagement;
+
+        FilterDefinition<Engagement> filter = Builders<Engagement>.Filter.Where(item =>
+            item.UserId == engagement.UserId && item.TokenId == engagement.TokenId && item.Type == "Like");
+        UpdateDefinition<Engagement> update = Builders<Engagement>.Update
+            .SetOnInsert(item => item.Id, engagement.Id)
+            .SetOnInsert(item => item.UserId, engagement.UserId)
+            .SetOnInsert(item => item.TokenId, engagement.TokenId)
+            .SetOnInsert(item => item.Type, engagement.Type)
+            .SetOnInsert(item => item.CreatedAt, engagement.CreatedAt);
+        return await engagements.FindOneAndUpdateAsync(
+            filter,
+            update,
+            new FindOneAndUpdateOptions<Engagement> { IsUpsert = true, ReturnDocument = ReturnDocument.After },
+            cancellationToken);
     }
 
     public Task<PagedResult<Engagement>> GetEngagementAsync(string tokenId, int limit, int offset, CancellationToken cancellationToken) => PageAsync(engagements, Builders<Engagement>.Filter.Eq(item => item.TokenId, tokenId), limit, offset, cancellationToken);
@@ -52,13 +66,14 @@ public sealed class MongoSocialRepository(IMongoDatabase database) : ISocialRepo
     public async Task<TokenVote> UpsertVoteAsync(TokenVote vote, CancellationToken cancellationToken)
     {
         FilterDefinition<TokenVote> filter = Builders<TokenVote>.Filter.Where(item => item.UserId == vote.UserId && item.TokenId == vote.TokenId);
-        TokenVote? existingVote = await votes.Find(filter).FirstOrDefaultAsync(cancellationToken);
-        if (existingVote is null)
-        { await votes.InsertOneAsync(vote, cancellationToken: cancellationToken); return vote; }
-        existingVote.Value = vote.Value;
-        existingVote.UpdatedAt = DateTimeOffset.UtcNow;
-        await votes.ReplaceOneAsync(filter, existingVote, cancellationToken: cancellationToken);
-        return existingVote;
+        UpdateDefinition<TokenVote> update = Builders<TokenVote>.Update
+            .Set(item => item.Value, vote.Value)
+            .Set(item => item.UpdatedAt, DateTimeOffset.UtcNow)
+            .SetOnInsert(item => item.Id, vote.Id)
+            .SetOnInsert(item => item.UserId, vote.UserId)
+            .SetOnInsert(item => item.TokenId, vote.TokenId)
+            .SetOnInsert(item => item.CreatedAt, vote.CreatedAt);
+        return await votes.FindOneAndUpdateAsync(filter, update, new FindOneAndUpdateOptions<TokenVote> { IsUpsert = true, ReturnDocument = ReturnDocument.After }, cancellationToken);
     }
 
     public async Task<bool> DeleteVoteAsync(string userId, string tokenId, CancellationToken cancellationToken) => (await votes.DeleteOneAsync(item => item.UserId == userId && item.TokenId == tokenId, cancellationToken)).DeletedCount > 0;
@@ -72,12 +87,14 @@ public sealed class MongoSocialRepository(IMongoDatabase database) : ISocialRepo
     public async Task<TokenSupport> UpsertSupportAsync(TokenSupport support, CancellationToken cancellationToken)
     {
         FilterDefinition<TokenSupport> filter = Builders<TokenSupport>.Filter.Where(item => item.KolUserId == support.KolUserId && item.TokenId == support.TokenId);
-        TokenSupport? existingSupport = await supports.Find(filter).FirstOrDefaultAsync(cancellationToken);
-        if (existingSupport is null)
-        { await supports.InsertOneAsync(support, cancellationToken: cancellationToken); return support; }
-        existingSupport.WithdrawnAt = null;
-        await supports.ReplaceOneAsync(filter, existingSupport, cancellationToken: cancellationToken);
-        return existingSupport;
+        UpdateDefinition<TokenSupport> update = Builders<TokenSupport>.Update
+            .Set(item => item.WithdrawnAt, null)
+            .SetOnInsert(item => item.Id, support.Id)
+            .SetOnInsert(item => item.KolUserId, support.KolUserId)
+            .SetOnInsert(item => item.TokenId, support.TokenId)
+            .SetOnInsert(item => item.Statement, support.Statement)
+            .SetOnInsert(item => item.CreatedAt, support.CreatedAt);
+        return await supports.FindOneAndUpdateAsync(filter, update, new FindOneAndUpdateOptions<TokenSupport> { IsUpsert = true, ReturnDocument = ReturnDocument.After }, cancellationToken);
     }
 
     public async Task<bool> WithdrawSupportAsync(string userId, string tokenId, CancellationToken cancellationToken)
@@ -95,11 +112,11 @@ public sealed class MongoSocialRepository(IMongoDatabase database) : ISocialRepo
     }
 
     public async Task<SocialPost> AddPostAsync(SocialPost post, CancellationToken cancellationToken) { await posts.InsertOneAsync(post, cancellationToken: cancellationToken); return post; }
-    public Task<SocialPost?> GetPostAsync(string postId, CancellationToken cancellationToken) => posts.Find(item => item.Id == postId && item.ModerationStatus == ModerationStatus.Published).FirstOrDefaultAsync(cancellationToken)!;
+    public Task<SocialPost?> GetPostAsync(string postId, CancellationToken cancellationToken) => posts.Find(item => item.Id == postId && item.ModerationStatus == ModerationStatus.Published && item.Access == PostAccess.Public).FirstOrDefaultAsync(cancellationToken)!;
 
     public Task<PagedResult<SocialPost>> GetPostsAsync(string? authorId, string? tokenId, int limit, int offset, CancellationToken cancellationToken)
     {
-        FilterDefinition<SocialPost> filter = Builders<SocialPost>.Filter.Eq(item => item.ModerationStatus, ModerationStatus.Published);
+        FilterDefinition<SocialPost> filter = Builders<SocialPost>.Filter.Where(item => item.ModerationStatus == ModerationStatus.Published && item.Access == PostAccess.Public);
         if (!string.IsNullOrWhiteSpace(authorId))
             filter &= Builders<SocialPost>.Filter.Eq(item => item.AuthorId, authorId);
         if (!string.IsNullOrWhiteSpace(tokenId))
@@ -114,6 +131,21 @@ public sealed class MongoSocialRepository(IMongoDatabase database) : ISocialRepo
         await follows.Indexes.CreateOneAsync(new CreateIndexModel<Follow>(Builders<Follow>.IndexKeys.Ascending(item => item.FollowerId).Ascending(item => item.TargetType).Ascending(item => item.TargetId), new CreateIndexOptions { Unique = true }), cancellationToken: cancellationToken);
         await votes.Indexes.CreateOneAsync(new CreateIndexModel<TokenVote>(Builders<TokenVote>.IndexKeys.Ascending(item => item.UserId).Ascending(item => item.TokenId), new CreateIndexOptions { Unique = true }), cancellationToken: cancellationToken);
         await supports.Indexes.CreateOneAsync(new CreateIndexModel<TokenSupport>(Builders<TokenSupport>.IndexKeys.Ascending(item => item.KolUserId).Ascending(item => item.TokenId), new CreateIndexOptions { Unique = true }), cancellationToken: cancellationToken);
+        await engagements.Indexes.CreateOneAsync(
+            new CreateIndexModel<Engagement>(
+                Builders<Engagement>.IndexKeys.Ascending(item => item.UserId).Ascending(item => item.TokenId).Ascending(item => item.Type),
+                new CreateIndexOptions<Engagement>
+                {
+                    Unique = true,
+                    PartialFilterExpression = Builders<Engagement>.Filter.Eq(item => item.Type, "Like"),
+                }),
+            cancellationToken: cancellationToken);
+        await outboxMessages.Indexes.CreateOneAsync(
+            new CreateIndexModel<MemeTokenHub.SocialService.Infrastructure.Messaging.OutboxMessage>(
+                Builders<MemeTokenHub.SocialService.Infrastructure.Messaging.OutboxMessage>.IndexKeys
+                    .Ascending(item => item.PublishedAt)
+                    .Ascending(item => item.OccurredAt)),
+            cancellationToken: cancellationToken);
     }
 
     private static async Task<PagedResult<T>> PageAsync<T>(IMongoCollection<T> collection, FilterDefinition<T> filter, int limit, int offset, CancellationToken cancellationToken)

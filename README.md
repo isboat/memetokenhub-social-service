@@ -67,3 +67,11 @@ Formatting is enforced by `.editorconfig` using Microsoft C# formatting option n
 ## API areas
 
 All routes are under `/api/social`: follows, token likes/comments, votes, KOL support, posts, and reputation. Write operations require a platform JWT. Public aggregate and content reads permit anonymous access where documented in Swagger.
+
+## Integration events and content access
+
+Accepted social writes are persisted to the MongoDB `EventOutbox` collection. A background worker delivers pending versioned envelopes to the configured Azure Service Bus topic and records delivery attempts; events remain durable when Service Bus is temporarily unavailable. Configure `ServiceBus__ConnectionString` and `ServiceBus__TopicName` outside source control.
+
+MongoDB uniqueness indexes are created by a startup hosted service before the API begins accepting traffic. These indexes, together with atomic upserts, keep follows, votes, support, and likes idempotent under concurrent requests.
+
+Subscriber posts are excluded from anonymous post endpoints. A future authenticated subscriber-content endpoint must consult Payment Service for entitlement before returning that content. KOL support creation and withdrawal require the `support:write` capability in the platform JWT.
