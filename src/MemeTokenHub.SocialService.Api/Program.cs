@@ -1,13 +1,17 @@
 using System.Reflection;
 using System.Text;
 using MemeTokenHub.SocialService.Api;
+using MemeTokenHub.SocialService.Api.Health;
 using MemeTokenHub.SocialService.Api.Middleware;
 using MemeTokenHub.SocialService.Application.Interfaces;
 using MemeTokenHub.SocialService.Application.Services;
 using MemeTokenHub.SocialService.Infrastructure.Configuration;
+using MemeTokenHub.SocialService.Infrastructure.Health;
 using MemeTokenHub.SocialService.Infrastructure.Messaging;
 using MemeTokenHub.SocialService.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using MongoDB.Driver;
@@ -42,7 +46,19 @@ builder.Services.AddAuthorization(options => options.AddPolicy(AuthorizationPoli
     policy.RequireAuthenticatedUser().RequireAssertion(context =>
         context.User.HasClaim("capability", AuthorizationPolicies.WriteSupport) ||
         context.User.Claims.Where(claim => claim.Type is "scope" or "capabilities").Any(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(AuthorizationPolicies.WriteSupport, StringComparer.Ordinal)))));
-builder.Services.AddHealthChecks().AddMongoDb(_ => new MongoClient(mongoOptions.ConnectionString), name: "mongodb");
+builder.Services.AddHealthChecks()
+    .AddCheck("application", () => HealthCheckResult.Healthy("The application is running."), ["live"])
+    .AddMongoDb(
+        _ => new MongoClient(mongoOptions.ConnectionString),
+        name: "mongodb",
+        failureStatus: HealthStatus.Unhealthy,
+        tags: ["ready", "dependency", "database"],
+        timeout: TimeSpan.FromSeconds(5))
+    .AddCheck<ServiceBusHealthCheck>(
+        "azure-service-bus",
+        failureStatus: HealthStatus.Unhealthy,
+        tags: ["ready", "dependency", "messaging"],
+        timeout: TimeSpan.FromSeconds(5));
 
 WebApplication app = builder.Build();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
@@ -52,8 +68,21 @@ app.UseHttpsRedirection();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
-app.MapHealthChecks("/health/live");
-app.MapHealthChecks("/health/ready");
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("live"),
+    ResponseWriter = HealthCheckResponseWriter.WriteAsync,
+});
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("ready"),
+    ResponseWriter = HealthCheckResponseWriter.WriteAsync,
+});
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    Predicate = _ => true,
+    ResponseWriter = HealthCheckResponseWriter.WriteAsync,
+});
 app.Run();
 
 public partial class Program;

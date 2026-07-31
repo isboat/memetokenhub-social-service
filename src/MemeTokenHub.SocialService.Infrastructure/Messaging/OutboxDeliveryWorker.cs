@@ -27,18 +27,25 @@ public sealed class OutboxDeliveryWorker(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            OutboxMessage? message = await messages
-                .Find(item => item.PublishedAt == null)
-                .SortBy(item => item.OccurredAt)
-                .FirstOrDefaultAsync(stoppingToken);
-
-            if (message is null)
+            try
             {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-                continue;
+                OutboxMessage? message = await messages
+                    .Find(item => item.PublishedAt == null)
+                    .SortBy(item => item.OccurredAt)
+                    .FirstOrDefaultAsync(stoppingToken);
+
+                if (message is not null)
+                {
+                    await DeliverAsync(sender, message, stoppingToken);
+                    continue;
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogError(exception, "The event outbox could not be queried.");
             }
 
-            await DeliverAsync(sender, message, stoppingToken);
+            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
         }
     }
 

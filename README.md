@@ -75,3 +75,13 @@ Accepted social writes are persisted to the MongoDB `EventOutbox` collection. A 
 MongoDB uniqueness indexes are created by a startup hosted service before the API begins accepting traffic. These indexes, together with atomic upserts, keep follows, votes, support, and likes idempotent under concurrent requests.
 
 Subscriber posts are excluded from anonymous post endpoints. A future authenticated subscriber-content endpoint must consult Payment Service for entitlement before returning that content. KOL support creation and withdrawal require the `support:write` capability in the platform JWT.
+
+## Health dashboard
+
+The service exposes three JSON health endpoints:
+
+- `/health/live` confirms that the application process is running and does not probe dependencies.
+- `/health/ready` checks required MongoDB and Azure Service Bus dependencies.
+- `/health` returns the application and every registered dependency check in a dashboard-friendly response containing the overall status, check timestamp, total duration, individual status, duration, description, tags, and a safe error message.
+
+The readiness and aggregate endpoints return HTTP `503` whenever a required dependency is unavailable or not configured. The Azure Service Bus connection used by the health check must be able to read runtime properties for the configured topic.
