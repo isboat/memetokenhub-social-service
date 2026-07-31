@@ -1,0 +1,1 @@
+namespace MemeTokenHub.SocialService.Application.Interfaces; public interface IEventPublisher { Task PublishAsync<T>(string eventType, string subjectId, T payload, CancellationToken cancellationToken); }

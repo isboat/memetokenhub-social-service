@@ -1,0 +1,1 @@
+namespace MemeTokenHub.SocialService.Application.Models; public sealed class PagedResult<T> { public required IReadOnlyCollection<T> Items { get; init; } public int Limit { get; init; } public int Offset { get; init; } public long Total { get; init; } }
