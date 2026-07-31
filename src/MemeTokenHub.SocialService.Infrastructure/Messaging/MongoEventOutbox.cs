@@ -1,10 +1,11 @@
 using System.Text.Json;
 using MemeTokenHub.SocialService.Application.Interfaces;
+using MemeTokenHub.SocialService.Infrastructure.Persistence;
 using MongoDB.Driver;
 
 namespace MemeTokenHub.SocialService.Infrastructure.Messaging;
 
-public sealed class MongoEventOutbox(IMongoDatabase database) : IEventPublisher
+public sealed class MongoEventOutbox(IMongoDatabase database, IMongoOperationContext operationContext) : IEventPublisher
 {
     private readonly IMongoCollection<OutboxMessage> messages = database.GetCollection<OutboxMessage>("EventOutbox");
 
@@ -18,6 +19,6 @@ public sealed class MongoEventOutbox(IMongoDatabase database) : IEventPublisher
             Payload = JsonSerializer.SerializeToElement(payload),
         };
 
-        return messages.InsertOneAsync(message, cancellationToken: cancellationToken);
+        return messages.InsertOneAsync(operationContext.Session!, message, cancellationToken: cancellationToken);
     }
 }

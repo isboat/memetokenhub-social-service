@@ -25,4 +25,8 @@ public sealed class OutboxMessage
     public int DeliveryAttempts { get; set; }
 
     public string? LastError { get; set; }
+
+    public DateTimeOffset? DeadLetteredAt { get; set; }
+
+    public string? DeadLetterReason { get; set; }
 }

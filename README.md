@@ -85,3 +85,9 @@ The service exposes three JSON health endpoints:
 - `/health` returns the application and every registered dependency check in a dashboard-friendly response containing the overall status, check timestamp, total duration, individual status, duration, description, tags, and a safe error message.
 
 The readiness and aggregate endpoints return HTTP `503` whenever a required dependency is unavailable or not configured. The Azure Service Bus connection used by the health check must be able to read runtime properties for the configured topic.
+
+## Transactional consistency and recovery
+
+MongoDB must run as a replica set or sharded cluster because every social write and its outbox message commit in one transaction. If either operation fails, neither change is committed. Index initialization retries every ten seconds and readiness remains unhealthy until all required unique and delivery indexes exist.
+
+Outbox delivery retries a failed message up to five times. Exhausted messages are marked with a dead-letter timestamp and reason so later events continue to flow and operators can inspect or replay the failed record.

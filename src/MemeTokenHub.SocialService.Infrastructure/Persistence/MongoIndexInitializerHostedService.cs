@@ -5,21 +5,26 @@ namespace MemeTokenHub.SocialService.Infrastructure.Persistence;
 
 public sealed class MongoIndexInitializerHostedService(
     IMongoIndexInitializer indexInitializer,
-    ILogger<MongoIndexInitializerHostedService> logger) : IHostedService
+    IndexInitializationState state,
+    ILogger<MongoIndexInitializerHostedService> logger) : BackgroundService
 {
-    public async Task StartAsync(CancellationToken cancellationToken)
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        try
+        while (!stoppingToken.IsCancellationRequested && !state.IsInitialized)
         {
-            await indexInitializer.CreateIndexesAsync(cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            logger.LogError(
-                exception,
-                "MongoDB indexes could not be initialized. Readiness will remain unhealthy until MongoDB is available.");
+            try
+            {
+                await indexInitializer.CreateIndexesAsync(stoppingToken);
+                state.IsInitialized = true;
+                state.LastError = null;
+                logger.LogInformation("MongoDB indexes are initialized.");
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                state.LastError = exception.Message;
+                logger.LogError(exception, "MongoDB index initialization failed and will be retried.");
+                await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+            }
         }
     }
-
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

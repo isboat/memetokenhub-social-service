@@ -23,13 +23,15 @@ string jwtSecret = builder.Configuration["Jwt:SecretKey"] ?? throw new InvalidOp
 
 builder.Services.AddSingleton<IMongoClient>(_ => new MongoClient(mongoOptions.ConnectionString));
 builder.Services.AddSingleton(provider => provider.GetRequiredService<IMongoClient>().GetDatabase(mongoOptions.DatabaseName));
-builder.Services.AddSingleton<MongoSocialRepository>();
-builder.Services.AddSingleton<ISocialRepository>(provider => provider.GetRequiredService<MongoSocialRepository>());
-builder.Services.AddSingleton<IMongoIndexInitializer>(provider => provider.GetRequiredService<MongoSocialRepository>());
-builder.Services.AddHostedService<MongoIndexInitializerHostedService>();
+builder.Services.AddScoped<IMongoOperationContext, MongoOperationContext>();
+builder.Services.AddScoped<ISocialRepository, MongoSocialRepository>();
+builder.Services.AddScoped<IUnitOfWork, MongoUnitOfWork>();
 builder.Services.AddScoped<ISocialService, SocialService>();
+builder.Services.AddSingleton<IMongoIndexInitializer, MongoIndexInitializer>();
+builder.Services.AddSingleton<IndexInitializationState>();
+builder.Services.AddHostedService<MongoIndexInitializerHostedService>();
 builder.Services.AddSingleton(serviceBusOptions);
-builder.Services.AddSingleton<IEventPublisher, MongoEventOutbox>();
+builder.Services.AddScoped<IEventPublisher, MongoEventOutbox>();
 builder.Services.AddHostedService<OutboxDeliveryWorker>();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
@@ -58,7 +60,11 @@ builder.Services.AddHealthChecks()
         "azure-service-bus",
         failureStatus: HealthStatus.Unhealthy,
         tags: ["ready", "dependency", "messaging"],
-        timeout: TimeSpan.FromSeconds(5));
+        timeout: TimeSpan.FromSeconds(5))
+    .AddCheck<IndexInitializationHealthCheck>(
+        "mongodb-indexes",
+        failureStatus: HealthStatus.Unhealthy,
+        tags: ["ready", "dependency", "database"]);
 
 WebApplication app = builder.Build();
 app.UseMiddleware<ExceptionHandlingMiddleware>();

@@ -12,6 +12,8 @@ public sealed class OutboxDeliveryWorker(
     ServiceBusOptions options,
     ILogger<OutboxDeliveryWorker> logger) : BackgroundService
 {
+    private const int MaximumDeliveryAttempts = 5;
+
     private readonly IMongoCollection<OutboxMessage> messages = database.GetCollection<OutboxMessage>("EventOutbox");
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -30,7 +32,7 @@ public sealed class OutboxDeliveryWorker(
             try
             {
                 OutboxMessage? message = await messages
-                    .Find(item => item.PublishedAt == null)
+                    .Find(item => item.PublishedAt == null && item.DeadLetteredAt == null)
                     .SortBy(item => item.OccurredAt)
                     .FirstOrDefaultAsync(stoppingToken);
 
@@ -75,12 +77,28 @@ public sealed class OutboxDeliveryWorker(
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            logger.LogError(exception, "Failed to deliver outbox event {EventId}", outboxMessage.Id);
+            int attemptNumber = outboxMessage.DeliveryAttempts + 1;
+            bool shouldDeadLetter = attemptNumber >= MaximumDeliveryAttempts;
+            logger.LogError(
+                exception,
+                "Failed to deliver outbox event {EventId} on attempt {AttemptNumber}; dead-letter: {ShouldDeadLetter}",
+                outboxMessage.Id,
+                attemptNumber,
+                shouldDeadLetter);
+
+            UpdateDefinition<OutboxMessage> update = Builders<OutboxMessage>.Update
+                .Set(item => item.DeliveryAttempts, attemptNumber)
+                .Set(item => item.LastError, exception.Message);
+            if (shouldDeadLetter)
+            {
+                update = update
+                    .Set(item => item.DeadLetteredAt, DateTimeOffset.UtcNow)
+                    .Set(item => item.DeadLetterReason, "Maximum delivery attempts exceeded.");
+            }
+
             await messages.UpdateOneAsync(
                 item => item.Id == outboxMessage.Id,
-                Builders<OutboxMessage>.Update
-                    .Inc(item => item.DeliveryAttempts, 1)
-                    .Set(item => item.LastError, exception.Message),
+                update,
                 cancellationToken: cancellationToken);
             await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
         }
